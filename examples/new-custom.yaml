@@ -1,0 +1,9 @@
+---
+apiVersion: psqladmin.cwx.io/v1
+kind: DatabaseAccount
+metadata:
+  labels:
+    app: secretapp
+  name: secretaccount
+spec:
+  secretName: custom-secret-name

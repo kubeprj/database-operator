@@ -1,0 +1,12 @@
+apiVersion: kubeprj.github.io/v1
+kind: DatabaseAccount
+metadata:
+  labels:
+    app.kubernetes.io/name: databaseaccount
+    app.kubernetes.io/instance: databaseaccount-sample
+    app.kubernetes.io/part-of: database-operator
+    app.kuberentes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: database-operator
+  name: databaseaccount-sample
+spec:
+  # TODO(user): Add fields here

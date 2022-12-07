@@ -1,0 +1,7 @@
+---
+apiVersion: psqladmin.cwx.io/v1
+kind: DatabaseAccount
+metadata:
+  labels:
+    app: testapp
+  name: testaccount

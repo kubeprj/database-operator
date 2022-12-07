@@ -1,0 +1,22 @@
+domain: kubeprj.github.io
+layout:
+- go.kubebuilder.io/v4-alpha
+projectName: database-operator
+repo: github.com/kubeprj/database-operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: kubeprj.github.io
+  kind: DatabaseAccount
+  path: github.com/kubeprj/database-operator/api/v1
+  version: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: kubeprj.github.io
+  kind: DatabaseAccountControllerConfig
+  path: github.com/kubeprj/database-operator/api/v1
+  version: v1
+version: "3"

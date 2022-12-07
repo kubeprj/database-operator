@@ -1,0 +1,31 @@
+# permissions for end users to edit databaseaccountcontrollerconfigs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: databaseaccountcontrollerconfig-editor-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: database-operator
+    app.kubernetes.io/part-of: database-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: databaseaccountcontrollerconfig-editor-role
+rules:
+- apiGroups:
+  - kubeprj.github.io
+  resources:
+  - databaseaccountcontrollerconfigs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - kubeprj.github.io
+  resources:
+  - databaseaccountcontrollerconfigs/status
+  verbs:
+  - get

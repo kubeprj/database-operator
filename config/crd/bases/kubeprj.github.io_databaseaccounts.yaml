@@ -1,0 +1,96 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.9.2
+  creationTimestamp: null
+  name: databaseaccounts.kubeprj.github.io
+spec:
+  group: kubeprj.github.io
+  names:
+    kind: DatabaseAccount
+    listKind: DatabaseAccountList
+    plural: databaseaccounts
+    singular: databaseaccount
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: deployment stage for database account
+      jsonPath: .status.stage
+      name: Stage
+      type: string
+    - description: ready status of database account
+      jsonPath: .status.ready
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: DatabaseAccount is the Schema for the databaseaccounts API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: DatabaseAccountSpec defines the desired state of DatabaseAccount
+            properties:
+              annotations:
+                additionalProperties:
+                  type: string
+                description: 'Annotations is an unstructured key value map stored
+                  with a resource that may be set by external tools to store and retrieve
+                  arbitrary metadata. They are not queryable and should be preserved
+                  when modifying objects. More info: http://kubernetes.io/docs/user-guide/annotations'
+                type: object
+              labels:
+                additionalProperties:
+                  type: string
+                description: 'Map of string keys and values that can be used to organize
+                  and categorize (scope and select) objects. May match selectors of
+                  replication controllers and services. More info: http://kubernetes.io/docs/user-guide/labels'
+                type: object
+              secretName:
+                description: SecretName is the optional name for the secret created
+                  with the DSN.
+                type: string
+              username:
+                description: Username is the username for the postgresql Database
+                  account.
+                type: string
+            type: object
+          status:
+            description: DatabaseAccountStatus defines the observed state of DatabaseAccount
+            properties:
+              ready:
+                default: false
+                description: Ready is the boolean for when a resource is ready to
+                  use.
+                type: boolean
+              stage:
+                default: Init
+                description: State is the progress of creating the account.
+                enum:
+                - Init
+                - UserCreate
+                - DatabaseCreate
+                - Ready
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

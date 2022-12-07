@@ -1,0 +1,12 @@
+apiVersion: kubeprj.github.io/v1
+kind: DatabaseAccountControllerConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: databaseaccountcontrollerconfig
+    app.kubernetes.io/instance: databaseaccountcontrollerconfig-sample
+    app.kubernetes.io/part-of: database-operator
+    app.kuberentes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: database-operator
+  name: databaseaccountcontrollerconfig-sample
+spec:
+  # TODO(user): Add fields here
