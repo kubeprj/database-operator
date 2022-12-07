@@ -105,16 +105,6 @@ func (s *Server) IsRole(ctx context.Context, roleName string) (bool, error) {
 	return rows.Next(), nil
 }
 
-// func (s *Server) IsSchema(ctx context.Context, roleName string) (bool, error) {
-// 	rows, err := s.conn.Query(ctx, `select usename from pg_catalog.pg_user where usename=$1`, roleName)
-// 	if err != nil {
-// 		return false, err
-// 	}
-// 	defer rows.Close()
-
-// 	return rows.Next(), nil
-// }
-
 func (s *Server) IsDatabase(ctx context.Context, dbName string) (string, bool, error) {
 	_ = s.Connect(ctx)
 
