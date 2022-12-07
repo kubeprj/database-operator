@@ -116,33 +116,19 @@ func (r *DatabaseAccountReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 func (r *DatabaseAccountReconciler) stageInit(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	secret, err := r.getSecret(ctx, dbAccount)
-	if errors.Is(err, ErrNewSecret) {
+	if err := r.applySecretChanges(ctx, dbAccount, func(secret *corev1.Secret) error {
 		r.AccountServer.CopyConfigToSecret(secret)
-		if err := r.Create(ctx, secret); err != nil {
-			logger.Error(err, "unable to update Secret")
-
-			return ctrl.Result{
-				RequeueAfter: 5 * time.Second,
-			}, err
-		}
-	} else if err == nil {
-		r.AccountServer.CopyConfigToSecret(secret)
-		if err := r.Update(ctx, secret); err != nil {
-			logger.Error(err, "unable to update Secret")
-
-			return ctrl.Result{
-				RequeueAfter: 5 * time.Second,
-			}, err
-		}
-	} else if err != nil {
+		return nil
+	}); err != nil {
 		logger.Error(err, "unable to create/retrieve secret")
+
+		return ctrl.Result{}, nil
 	}
 
 	dbAccount.Status.Stage = v1.UserCreateStage
 
 	if err := r.Status().Update(ctx, dbAccount); err != nil {
-		logger.Error(err, "unable to update DatabaseAccount")
+		logger.Error(err, "unable to update DatabaseAccount status")
 
 		return ctrl.Result{
 			RequeueAfter: 5 * time.Second,
@@ -155,11 +141,6 @@ func (r *DatabaseAccountReconciler) stageInit(ctx context.Context, dbAccount *v1
 
 func (r *DatabaseAccountReconciler) stageUserCreate(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-
-	secret, err := r.getSecret(ctx, dbAccount)
-	if err != nil {
-		logger.Error(err, "unable to create/retrieve secret")
-	}
 
 	usr, pw, err := r.AccountServer.CreateRole(ctx, dbAccount.Name)
 	if errors.Is(err, accountsvr.ErrRoleExists) {
@@ -174,8 +155,15 @@ func (r *DatabaseAccountReconciler) stageUserCreate(ctx context.Context, dbAccou
 
 	r.Recorder.Event(dbAccount, "Normal", "UserCreate", "User created")
 
-	r.setSecretKV(secret, accountsvr.DatabaseKeyUsername, usr)
-	r.setSecretKV(secret, accountsvr.DatabaseKeyPassword, pw)
+	if err := r.applySecretChanges(ctx, dbAccount, func(secret *corev1.Secret) error {
+		r.setSecretKV(secret, accountsvr.DatabaseKeyUsername, usr)
+		r.setSecretKV(secret, accountsvr.DatabaseKeyPassword, pw)
+
+		return nil
+	}); err != nil {
+		logger.Error(err, "unable to create/retrieve secret")
+	}
+
 	dbAccount.Status.Stage = v1.DatabaseCreateStage
 
 	if err := r.Status().Update(ctx, dbAccount); err != nil {
@@ -187,27 +175,11 @@ func (r *DatabaseAccountReconciler) stageUserCreate(ctx context.Context, dbAccou
 	}
 	r.Recorder.Event(dbAccount, "Normal", "DatabaseCreate", "Creating Database")
 
-	if err := r.Update(ctx, secret); err != nil {
-		logger.Error(err, "unable to update Secret")
-
-		return ctrl.Result{
-			RequeueAfter: 5 * time.Second,
-		}, err
-	}
-
 	return ctrl.Result{}, nil
 }
 
 func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-
-	secret, err := r.getSecret(ctx, dbAccount)
-	if err != nil {
-		logger.Error(err, "unable to create/retrieve secret")
-		return ctrl.Result{
-			RequeueAfter: 5 * time.Second,
-		}, err
-	}
 
 	if dbName, v, err := r.AccountServer.IsDatabase(ctx, dbAccount.Name); err != nil {
 		r.Recorder.Event(dbAccount, "Warning", "DatabaseCreate", fmt.Sprintf("Failed to init check for create database: %s", err))
@@ -215,11 +187,27 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 		return ctrl.Result{}, err
 	} else if v {
 		r.Recorder.Event(dbAccount, "Warning", "DatabaseCreate", "Database already exists")
-		r.setSecretKV(secret, accountsvr.DatabaseKeyDatabase, dbName)
+		if err := r.applySecretChanges(ctx, dbAccount, func(secret *corev1.Secret) error {
+			r.setSecretKV(secret, accountsvr.DatabaseKeyDatabase, dbName)
+			r.setSecretKV(secret, accountsvr.DatabaseKeyDSN, accountsvr.GenerateDSN(secret))
+			return nil
+		}); err != nil {
+			logger.Error(err, "unable to update secret")
+
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+		}
 	} else {
 		dbName, err := r.AccountServer.CreateDatabase(ctx, dbAccount.Name, dbAccount.Name)
 
-		r.setSecretKV(secret, accountsvr.DatabaseKeyDatabase, dbName)
+		if err := r.applySecretChanges(ctx, dbAccount, func(secret *corev1.Secret) error {
+			r.setSecretKV(secret, accountsvr.DatabaseKeyDatabase, dbName)
+			r.setSecretKV(secret, accountsvr.DatabaseKeyDSN, accountsvr.GenerateDSN(secret))
+			return nil
+		}); err != nil {
+			logger.Error(err, "unable to update secret")
+
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+		}
 
 		if err != nil {
 			r.Recorder.Event(dbAccount, "Warning", "DatabaseCreate", fmt.Sprintf("Failed to create database: %s", err))
@@ -228,15 +216,6 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 	}
 
 	r.Recorder.Event(dbAccount, "Normal", "DatabaseCreate", "Database created")
-	r.setSecretKV(secret, accountsvr.DatabaseKeyDSN, accountsvr.GenerateDSN(secret))
-
-	if err := r.Update(ctx, secret); err != nil {
-		logger.Error(err, "unable to update secret")
-
-		return ctrl.Result{
-			RequeueAfter: 5 * time.Second,
-		}, err
-	}
 
 	dbAccount.Status.Stage = v1.ReadyStage
 	dbAccount.Status.Ready = true
