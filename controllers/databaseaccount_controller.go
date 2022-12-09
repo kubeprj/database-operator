@@ -506,12 +506,12 @@ func (r *DatabaseAccountReconciler) reconcileSecret(secretObj client.Object) []r
 	if !strings.EqualFold(string(secret.Type), secretType) {
 		return requests
 	}
-	logger.Info("call():reconcileSecret",
-		"name", secretObj.GetName(),
-		"namespace", secretObj.GetNamespace(),
-		"managedFields", secretObj.GetManagedFields(),
-		"secretType", secret.Type,
-	)
+	// logger.Info("call():reconcileSecret",
+	// 	"name", secretObj.GetName(),
+	// 	"namespace", secretObj.GetNamespace(),
+	// 	"managedFields", secretObj.GetManagedFields(),
+	// 	"secretType", secret.Type,
+	// )
 
 	if secret.ObjectMeta.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(secret, finalizerName) {
