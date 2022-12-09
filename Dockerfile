@@ -27,12 +27,15 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
+ARG GIT_HEAD_HASH_FULL=
+ARG VERSION=0.9.0
 
-LABEL name="kubeprj-database-operator" \
-      vendor="kubeprj" \
-      version="0.9.0" \
-      summary="Database account operator for Kubernetes" \
-      description="The Database operator runs on a kubernetes cluster and maintains accounts on an external database cluster."
+LABEL org.opencontainers.image.source="https://github.com/kubeprj/database-operator" \
+  org.opencontainers.image.title="Database Operator" \
+  org.opencontainers.image.vendor="kubeprj" \
+  org.opencontainers.image.version="${VERSION}" \
+  org.opencontainers.image.revision="${GIT_HEAD_HASH_FULL}" \
+  org.opencontainers.image.description="The Database operator runs on a kubernetes cluster and maintains accounts on an external database server or cluster."
 
 WORKDIR /
 COPY --from=builder /workspace/manager .

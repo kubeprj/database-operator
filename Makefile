@@ -4,6 +4,8 @@ IMG ?= kubeprj/database-operator:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.25.0
 
+VERSION ?= 0.9.0
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -69,16 +71,18 @@ build: generate fmt vet ## Build manager binary.
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./main.go $(RUN_ARGS)
 
+GIT_HEAD_HASH_FULL := $(shell git rev-parse --verify HEAD)
+
 # If you wish built the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64 ). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: test ## Build docker image with the manager.
-	docker buildx build --platform linux/amd64 --pull --tag ${IMG} .
+	docker buildx build --platform linux/amd64 --build-arg "VERSION=$(VERSION)" --build-arg "GIT_HEAD_HASH_FULL=$(GIT_HEAD_HASH_FULL)" --pull --load --tag ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
-	docker buildx build --platform linux/amd64 --pull --push --tag ${IMG} .
+	docker buildx build --platform linux/amd64 --build-arg "VERSION=$(VERSION)" --build-arg "GIT_HEAD_HASH_FULL=$(GIT_HEAD_HASH_FULL)" --pull --push --tag ${IMG} .
 
 # PLATFORMS defines the target platforms for  the manager image be build to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
