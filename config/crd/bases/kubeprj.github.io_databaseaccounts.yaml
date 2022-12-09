@@ -45,7 +45,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: DatabaseAccountSpec defines the desired state of DatabaseAccount
+            description: DatabaseAccountSpec defines the desired state of DatabaseAccount.
             properties:
               name:
                 description: Name is the basename used for the resource, if not specified
@@ -92,7 +92,7 @@ spec:
                 type: string
             type: object
           status:
-            description: DatabaseAccountStatus defines the observed state of DatabaseAccount
+            description: DatabaseAccountStatus defines the observed state of DatabaseAccount.
             properties:
               error:
                 description: Error is true if the DatabaseAccount is in error.
@@ -119,7 +119,6 @@ spec:
                 - DatabaseCreate
                 - Error
                 - Ready
-                - Closed
                 type: string
             type: object
         type: object
