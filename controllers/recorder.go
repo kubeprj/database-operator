@@ -51,7 +51,12 @@ func (r *RecorderWrapper) WarningEvent(dbAccount *v1.DatabaseAccount, reason Rec
 	)
 }
 
-func (r *RecorderWrapper) Event(dbAccount *v1.DatabaseAccount, eventType RecorderEventType, reason RecorderReason, message string) {
+func (r *RecorderWrapper) Event(
+	dbAccount *v1.DatabaseAccount,
+	eventType RecorderEventType,
+	reason RecorderReason,
+	message string,
+) {
 	r.r.Event(
 		dbAccount,
 		eventType.String(),

@@ -26,6 +26,10 @@ var (
 
 const (
 	PostgreSQLNameDataLen = 64
+
+	passwordLength         = 28
+	passwordComplexDigits  = 10
+	passwordComplexSymbols = 1
 )
 
 type Server struct {
@@ -41,10 +45,10 @@ const (
 	DatabaseKeyPort     = "port"
 	DatabaseKeySchema   = "schema"
 	DatabaseKeyDatabase = "database"
+	DatabaseKeyOnDelete = "onDelete"
 )
 
 func NewServer(ctx context.Context, connString string) (*Server, error) {
-	fmt.Printf("Attempting to connect to %s\n", connString)
 	s := &Server{
 		connString: connString,
 	}
@@ -109,7 +113,7 @@ func (s *Server) ListUsers(ctx context.Context) []string {
 	o := []string{}
 
 	for rows.Next() {
-		if err != nil {
+		if rows.Err() != nil {
 			return o
 		}
 		o = append(o, fmt.Sprintf("%#v", rows.RawValues()))
@@ -122,7 +126,7 @@ func (s *Server) ListUsers(ctx context.Context) []string {
 func (s *Server) generatePassword(ctx context.Context) string {
 	logger := log.FromContext(ctx)
 
-	res, err := password.Generate(28, 10, 1, false, false)
+	res, err := password.Generate(passwordLength, passwordComplexDigits, passwordComplexSymbols, false, false)
 	if err != nil {
 		logger.Error(err, "unable to generate password")
 		panic(err)

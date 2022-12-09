@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/kubeprj/database-operator/accountsvr"
@@ -29,10 +30,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 const (
@@ -87,33 +94,8 @@ func (r *DatabaseAccountReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	if dbAccount.ObjectMeta.DeletionTimestamp.IsZero() {
-		if !controllerutil.ContainsFinalizer(&dbAccount, finalizerName) {
-			// logger.V(1).Info("adding finalizer to DatabaseAccount")
-			controllerutil.AddFinalizer(&dbAccount, finalizerName)
-			if err := r.Update(ctx, &dbAccount); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-	} else {
-		// object is being deleted
-		if controllerutil.ContainsFinalizer(&dbAccount, finalizerName) {
-			// our finalizer is present, so lets handle any external dependency
-			if err := r.deleteExternalResources(ctx, &dbAccount); err != nil {
-				// if fail to delete the external dependency here, return with error
-				// so that it can be retried
-				return requeueResult, err
-			}
-
-			// remove our finalizer from the list and update it.
-			controllerutil.RemoveFinalizer(&dbAccount, finalizerName)
-			if err := r.Update(ctx, &dbAccount); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-
-		// Stop reconciliation as the item is being deleted
-		return ctrl.Result{}, nil
+	if ok, result, err := r.handleFinalizers(ctx, &dbAccount); ok {
+		return result, err
 	}
 
 	// logger.V(1).Info("entering switch", "stage", dbAccount.Status.Stage)
@@ -145,6 +127,39 @@ func (r *DatabaseAccountReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, nil
 }
 
+func (r *DatabaseAccountReconciler) handleFinalizers(ctx context.Context, dbAccount *v1.DatabaseAccount) (bool, ctrl.Result, error) {
+	if dbAccount.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(dbAccount, finalizerName) {
+			// logger.V(1).Info("adding finalizer to DatabaseAccount")
+			controllerutil.AddFinalizer(dbAccount, finalizerName)
+			if err := r.Update(ctx, dbAccount); err != nil {
+				return true, ctrl.Result{}, err
+			}
+		}
+	} else {
+		// object is being deleted
+		if controllerutil.ContainsFinalizer(dbAccount, finalizerName) {
+			// our finalizer is present, so lets handle any external dependency
+			if err := r.deleteExternalResources(ctx, dbAccount); err != nil {
+				// if fail to delete the external dependency here, return with error
+				// so that it can be retried
+				return true, requeueResult, err
+			}
+
+			// remove our finalizer from the list and update it.
+			controllerutil.RemoveFinalizer(dbAccount, finalizerName)
+			if err := r.Update(ctx, dbAccount); err != nil {
+				return true, ctrl.Result{}, err
+			}
+		}
+
+		// Stop reconciliation as the item is being deleted
+		return true, ctrl.Result{}, nil
+	}
+
+	return false, ctrl.Result{}, nil
+}
+
 // deleteExternalResources takes the DatabaseAccount and removes any external resources if required.
 func (r *DatabaseAccountReconciler) deleteExternalResources(ctx context.Context, dbAccount *v1.DatabaseAccount) error {
 	logger := log.FromContext(ctx)
@@ -156,26 +171,37 @@ func (r *DatabaseAccountReconciler) deleteExternalResources(ctx context.Context,
 			return err
 		}
 
-		logger.Info("Database record marked for delete, deleting", "dbName", name)
+		return r.deleteDatabase(ctx, name)
+	case v1.OnDeleteRetain:
+		logger.Info("Database record marked for retention, skipping delete")
+	}
+	return nil
+}
 
-		if dbName, ok, err := r.AccountServer.IsDatabase(ctx, name); err == nil && ok {
-			logger.V(1).Info("Database exists, deleting")
+// deleteExternalResources takes the DatabaseAccount and removes any external resources if required.
+func (r *DatabaseAccountReconciler) deleteDatabase(ctx context.Context, name string) error {
+	logger := log.FromContext(ctx)
 
-			if err := r.AccountServer.Delete(ctx, name); err != nil {
-				logger.Error(err, "Unable to delete database and/or user")
+	logger.Info("Database record marked for delete, deleting", "databaseName", name)
 
-				return err
-			}
-		} else if err != nil {
-			logger.Error(err, "Unable to check if database exists")
+	if dbName, ok, err := r.AccountServer.IsDatabase(ctx, name); err == nil && ok {
+		logger.V(1).Info("Database exists, deleting")
+
+		if err := r.AccountServer.Delete(ctx, name); err != nil {
+			logger.Error(err, "Unable to delete database and/or user")
 
 			return err
-		} else {
-			logger.V(1).Info("IsDatabase returned", "isDB[dbName]", dbName, "isDB[ok]", ok, "isDB[err]", err)
 		}
-	case v1.OnDeleteRetain:
-		logger.Info("database record marked for retention, skipping delete")
+
+		logger.Info("Database account deleted", "databaseName", name)
+	} else if err != nil {
+		logger.V(1).Error(err, "Unable to check if database exists")
+
+		return err
+	} else {
+		logger.V(1).Info("IsDatabase returned", "isDB[dbName]", dbName, "isDB[ok]", ok, "isDB[err]", err)
 	}
+
 	return nil
 }
 
@@ -188,7 +214,7 @@ func (r *DatabaseAccountReconciler) stageZero(ctx context.Context, dbAccount *v1
 	}
 
 	if err := dbAccount.UpdateStatus(r, ctx); err != nil {
-		logger.Error(err, "unable to update DatabaseAccount")
+		logger.V(1).Error(err, "unable to update DatabaseAccount")
 
 		return requeueResult, err
 	}
@@ -227,14 +253,14 @@ func (r *DatabaseAccountReconciler) stageInit(ctx context.Context, dbAccount *v1
 		dbAccount.Status.Stage = v1.ErrorStage
 
 		if err := dbAccount.UpdateStatus(r, ctx); err != nil {
-			logger.Error(err, "Unable to update DatabaseAccount status")
+			logger.V(1).Error(err, "Unable to update DatabaseAccount status")
 
 			return requeueResult, err
 		}
 
 		return ctrl.Result{}, nil
 	} else if err != nil {
-		logger.Error(err, "Unable to create/retrieve secret")
+		logger.V(1).Error(err, "Unable to create/retrieve secret")
 
 		return requeueResult, err
 	} else {
@@ -244,7 +270,7 @@ func (r *DatabaseAccountReconciler) stageInit(ctx context.Context, dbAccount *v1
 	dbAccount.Status.Stage = v1.UserCreateStage
 
 	if err := r.Status().Update(ctx, dbAccount); err != nil {
-		logger.Error(err, "Unable to update DatabaseAccount status")
+		logger.V(1).Error(err, "Unable to update DatabaseAccount status")
 
 		return requeueResult, err
 	}
@@ -282,7 +308,7 @@ func (r *DatabaseAccountReconciler) stageUserCreate(ctx context.Context, dbAccou
 
 		return nil
 	}); err != nil {
-		logger.Error(err, "Unable to create/retrieve secret")
+		logger.V(1).Error(err, "Unable to create/retrieve secret")
 
 		return requeueResult, err
 	}
@@ -290,7 +316,7 @@ func (r *DatabaseAccountReconciler) stageUserCreate(ctx context.Context, dbAccou
 	dbAccount.Status.Stage = v1.DatabaseCreateStage
 
 	if err := r.Status().Update(ctx, dbAccount); err != nil {
-		logger.Error(err, "Unable to update DatabaseAccount")
+		logger.V(1).Error(err, "Unable to update DatabaseAccount")
 
 		return requeueResult, err
 	}
@@ -322,7 +348,7 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 			secret.Immutable = &boolTrue
 			return nil
 		}); err != nil {
-			logger.Error(err, "Unable to update secret")
+			logger.V(1).Error(err, "Unable to update secret")
 
 			return requeueResult, err
 		}
@@ -337,7 +363,7 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 			secret.Immutable = &boolTrue
 			return nil
 		}); err != nil {
-			logger.Error(err, "Unable to update secret")
+			logger.V(1).Error(err, "Unable to update secret")
 
 			return requeueResult, err
 		}
@@ -353,12 +379,16 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 	dbAccount.Status.Stage = v1.ReadyStage
 	dbAccount.Status.Ready = true
 	if err := r.Status().Update(ctx, dbAccount); err != nil {
-		logger.Error(err, "Unable to update DatabaseAccount")
+		logger.V(1).Error(err, "Unable to update DatabaseAccount")
 
 		return requeueResult, err
 	}
 
 	r.Recorder.NormalEvent(dbAccount, ReasonReady, "Ready to use")
+	logger.Info("Record is marked as ready",
+		"databaseUsername", dbAccount.Status.Name,
+		"secretName", dbAccount.GetSecretName(),
+	)
 
 	// logger.V(1).Info("return result[ok]")
 	return ctrl.Result{}, nil
@@ -367,7 +397,20 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 func (r *DatabaseAccountReconciler) stageReady(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	logger.Info("Record is marked as ready, nothing to do")
+	logger.V(1).Info("Record is marked as ready, nothing to do")
+
+	if _, err := secretGetByName(ctx, r, dbAccount.GetSecretName()); apierrors.IsNotFound(err) {
+		// secret has been deleted, probably sent here from reconcile trigger in secret delete.
+		logger.Info("Secret has been deleted, remove DatabaseAccount")
+
+		if err := r.Delete(ctx, dbAccount); err != nil {
+			logger.Error(err, "Unable to delete DatabaseAccount in reaction to secret deletion")
+
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+
+		return ctrl.Result{}, nil
+	}
 
 	onDeleteUpdate := false
 	if err := secretRun(ctx, r, r, r.AccountServer, dbAccount, func(secret *corev1.Secret) error {
@@ -390,7 +433,7 @@ func (r *DatabaseAccountReconciler) stageReady(ctx context.Context, dbAccount *v
 
 		return nil
 	}); err != nil {
-		logger.Error(err, "Unable to update secret")
+		logger.V(1).Error(err, "Unable to update secret")
 
 		return requeueResult, err
 	}
@@ -411,41 +454,6 @@ func (r *DatabaseAccountReconciler) stageError(ctx context.Context, dbAccount *v
 	return ctrl.Result{}, nil
 }
 
-// func (r *DatabaseAccountReconciler) addOwnerRefs(secret *corev1.Secret, dbAccount *v1.DatabaseAccount) *corev1.Secret {
-// 	secret.OwnerReferences = []metav1.OwnerReference{*dbAccount.GetReference()}
-
-// 	return secret
-// }
-
-// func (r *DatabaseAccountReconciler) getSecret(ctx context.Context, dbAccount *v1.DatabaseAccount) (*corev1.Secret, error) {
-// 	secret := &corev1.Secret{}
-
-// 	if err := r.Get(ctx, dbAccount.GetSecretName(), secret); apierrors.IsNotFound(err) {
-
-// 		// user := uuid.NewUUID()
-// 		secret = &corev1.Secret{
-// 			ObjectMeta: metav1.ObjectMeta{
-// 				Name:        dbAccount.GetSecretName().Name,
-// 				Namespace:   dbAccount.Namespace,
-// 				Annotations: dbAccount.Spec.SecretTemplate.Annotations,
-// 				Labels:      dbAccount.Spec.SecretTemplate.Labels,
-// 			},
-// 			StringData: map[string]string{},
-// 			Data:       map[string][]byte{},
-// 			Type:       `kubeprj.github.io/database-account`,
-// 		}
-// 		if dbAccount.Spec.OnDelete == v1.OnDeleteDelete {
-// 			r.addOwnerRefs(secret, dbAccount)
-// 		}
-
-// 		return secret, ErrNewSecret
-// 	} else if err != nil {
-// 		return secret, err
-// 	}
-
-// 	return secret, nil
-// }
-
 func (r *DatabaseAccountReconciler) setSecretKV(secret *corev1.Secret, key, value string) {
 	if secret.StringData == nil {
 		secret.StringData = make(map[string]string)
@@ -456,76 +464,83 @@ func (r *DatabaseAccountReconciler) setSecretKV(secret *corev1.Secret, key, valu
 	secret.Data[key] = []byte(value)
 }
 
-// func (r *DatabaseAccountReconciler) databaseNameFromAccount(dbAccount *v1.DatabaseAccount) (string, error) {
-// 	if len(dbAccount.Status.Name) == 0 {
-// 		return "", fmt.Errorf("%w: database username missing", ErrInvalidSecret)
-// 	}
+func (r *DatabaseAccountReconciler) reconcileSecret(secretObj client.Object) []reconcile.Request {
+	ctx := context.Background()
+	logger := log.FromContext(ctx)
+	requests := []reconcile.Request{}
 
-// 	return dbAccount.Status.Name.String(), nil
-// }
+	name := types.NamespacedName{
+		Name:      secretObj.GetName(),
+		Namespace: secretObj.GetNamespace(),
+	}
+	secret, err := secretGetByName(ctx, r, name)
+	if err != nil {
+		return requests
+	}
 
-// func (r *DatabaseAccountReconciler) databaseNameFromSecret(secret *corev1.Secret) (string, error) {
-// 	if v, ok := secret.Data[accountsvr.DatabaseKeyUsername]; ok {
-// 		return string(v), nil
-// 	}
+	if !strings.EqualFold(string(secret.Type), secretType) {
+		return requests
+	}
+	logger.Info("call():reconcileSecret",
+		"name", secretObj.GetName(),
+		"namespace", secretObj.GetNamespace(),
+		"managedFields", secretObj.GetManagedFields(),
+		"secretType", secret.Type,
+	)
 
-// 	return "", fmt.Errorf("%w: database username missing", ErrInvalidSecret)
-// }
+	if secret.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(secret, finalizerName) {
+			// logger.V(1).Info("adding finalizer to DatabaseAccount")
+			controllerutil.AddFinalizer(secret, finalizerName)
+			if err := r.Update(ctx, secret); err != nil {
+				return requests
+			}
+		}
+	} else {
+		// object is being deleted
+		if controllerutil.ContainsFinalizer(secret, finalizerName) {
+			// our finalizer is present, so lets handle any external dependency
+			if dbName, ok := secret.Data[accountsvr.DatabaseKeyDatabase]; ok {
+				logger.Info("Database removal triggered by secret delete", "databaseName", dbName)
 
-// func (r *DatabaseAccountReconciler) secretNameFromAccount(dbAccount *v1.DatabaseAccount) types.NamespacedName {
-// 	if dbAccount.Spec.SecretName != "" {
-// 		return types.NamespacedName{
-// 			Namespace: dbAccount.GetNamespace(),
-// 			Name:      dbAccount.Spec.SecretName,
-// 		}
-// 	}
+				if len(secret.GetOwnerReferences()) > 0 {
+					ownerRef := secret.GetOwnerReferences()[0]
+					requests = append(requests, reconcile.Request{
+						NamespacedName: types.NamespacedName{
+							Namespace: secret.GetNamespace(),
+							Name:      ownerRef.Name,
+						},
+					})
+				}
 
-// 	return types.NamespacedName{
-// 		Namespace: dbAccount.GetNamespace(),
-// 		Name:      dbAccount.GetName(),
-// 	}
-// }
+				if err := r.deleteDatabase(ctx, string(dbName)); err != nil {
+					return requests
+				}
+			}
 
-// func (r *DatabaseAccountReconciler) applySecretChanges(ctx context.Context, dbAccount *v1.DatabaseAccount, f func(secret *corev1.Secret) error) error {
-// 	logger := log.FromContext(ctx)
+			// remove our finalizer from the list and update it.
+			controllerutil.RemoveFinalizer(secret, finalizerName)
+			if err := r.Update(ctx, secret); err != nil {
+				return requests
+			}
+		}
 
-// 	secret, err := secretGet(ctx, r, dbAccount)
-// 	if errors.Is(err, ErrNewSecret) {
-// 		r.AccountServer.CopyConfigToSecret(secret)
-// 		if err := r.Create(ctx, secret); err != nil {
-// 			logger.Error(err, "unable to create secret")
+		// Stop reconciliation as the item is being deleted
+		return requests
+	}
 
-// 			return err
-// 		}
-// 	} else if err != nil {
-// 		return err
-// 	}
-
-// 	preChecksum := crc32.ChecksumIEEE([]byte(secret.String()))
-
-// 	if err := f(secret); err != nil {
-// 		return err
-// 	}
-
-// 	postChecksum := crc32.ChecksumIEEE([]byte(secret.String()))
-
-// 	// logger.V(1).Info("Checksum Comparison", "preChecksum", preChecksum, "postChecksum", postChecksum)
-
-// 	if preChecksum != postChecksum {
-// 		logger.V(1).Info("secret updated", "preChecksum", preChecksum, "postChecksum", postChecksum)
-// 		if err := r.Update(ctx, secret); err != nil {
-// 			logger.Error(err, "unable to update secret")
-
-// 			return err
-// 		}
-// 	}
-
-// 	return nil
-// }
+	return requests
+}
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *DatabaseAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kubeprjgithubiov1.DatabaseAccount{}).
+		Owns(&corev1.Secret{}).
+		Watches(
+			&source.Kind{Type: &corev1.Secret{}},
+			handler.EnqueueRequestsFromMapFunc(r.reconcileSecret),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
 		Complete(r)
 }

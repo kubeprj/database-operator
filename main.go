@@ -36,7 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/kubeprj/database-operator/accountsvr"
-	kubeprjgithubiov1 "github.com/kubeprj/database-operator/api/v1"
 	v1 "github.com/kubeprj/database-operator/api/v1"
 	"github.com/kubeprj/database-operator/controllers"
 	//+kubebuilder:scaffold:imports
@@ -45,21 +44,30 @@ import (
 const (
 	defaultLeaderElectionID = "16a815a2.kubeprj.github.io"
 	controllerName          = "databaseaccount-controller"
+	controllerPort          = 9443
 )
 
+//nolint:gochecknoglobals // kubebuilder
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
 )
 
+//nolint:gochecknoinits // kubebuilder
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(kubeprjgithubiov1.AddToScheme(scheme))
+	utilruntime.Must(v1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
 func main() {
+	if err := mainCommand(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func mainCommand() error {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
@@ -89,7 +97,7 @@ func main() {
 	options := ctrl.Options{
 		Scheme:                        scheme,
 		MetricsBindAddress:            metricsAddr,
-		Port:                          9443,
+		Port:                          controllerPort,
 		HealthProbeBindAddress:        probeAddr,
 		LeaderElection:                enableLeaderElection,
 		LeaderElectionID:              defaultLeaderElectionID,
@@ -99,20 +107,20 @@ func main() {
 		options, err = options.AndFrom(ctrl.ConfigFile().AtPath(configFile).OfKind(&ctrlConfig))
 		if err != nil {
 			setupLog.Error(err, "unable to load the config file")
-			os.Exit(1)
+			return err
 		}
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), options)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
+		return err
 	}
 
 	svr, err := accountsvr.NewServer(context.Background(), ctrlConfig.DatabaseDSN)
 	if err != nil {
 		setupLog.Error(err, "unable to start database connection")
-		os.Exit(1)
+		return err
 	}
 	defer svr.Close(context.Background())
 
@@ -124,22 +132,24 @@ func main() {
 		Config:        &ctrlConfig,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DatabaseAccount")
-		os.Exit(1)
+		return err
 	}
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
-		os.Exit(1)
+		return err
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
-		os.Exit(1)
+		return err
 	}
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
-		os.Exit(1)
+		return err
 	}
+
+	return nil
 }

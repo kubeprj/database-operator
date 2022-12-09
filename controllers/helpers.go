@@ -12,10 +12,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+const (
+	secretType = `kubeprj.github.io/database-account`
+)
+
+// newDatabaseAccountName returns a newly generated database/username.
+//
+//nolint:unparam // ctx is sent for debugging with logger if needed.
 func newDatabaseAccountName(ctx context.Context) v1.PostgreSQLResourceName {
 	return v1.PostgreSQLResourceName(strings.ToLower("k8s_" + ulid.Make().String()))
 }
@@ -26,8 +34,8 @@ func secretRun(ctx context.Context, r client.Reader, w client.Writer, accountSvr
 	secret, err := secretGet(ctx, r, dbAccount)
 	if errors.Is(err, ErrNewSecret) {
 		accountSvr.CopyConfigToSecret(secret)
-		if err := w.Create(ctx, secret); err != nil {
-			logger.Error(err, "unable to create secret")
+		if err = w.Create(ctx, secret); err != nil {
+			logger.V(1).Error(err, "unable to create secret")
 
 			return err
 		}
@@ -48,7 +56,7 @@ func secretRun(ctx context.Context, r client.Reader, w client.Writer, accountSvr
 	if preChecksum != postChecksum {
 		logger.V(1).Info("Secret updated", "preChecksum", preChecksum, "postChecksum", postChecksum)
 		if err := w.Update(ctx, secret); err != nil {
-			logger.Error(err, "unable to update secret")
+			logger.V(1).Error(err, "unable to update secret")
 
 			return err
 		}
@@ -57,11 +65,19 @@ func secretRun(ctx context.Context, r client.Reader, w client.Writer, accountSvr
 	return nil
 }
 
-func secretGet(ctx context.Context, r client.Reader, dbAccount *v1.DatabaseAccount) (*corev1.Secret, error) {
+func secretGetByName(ctx context.Context, r client.Reader, name types.NamespacedName) (*corev1.Secret, error) {
 	secret := &corev1.Secret{}
 
-	if err := r.Get(ctx, dbAccount.GetSecretName(), secret); apierrors.IsNotFound(err) {
+	if err := r.Get(ctx, name, secret); err != nil {
+		return secret, err
+	}
 
+	return secret, nil
+}
+
+func secretGet(ctx context.Context, r client.Reader, dbAccount *v1.DatabaseAccount) (*corev1.Secret, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, dbAccount.GetSecretName(), secret); apierrors.IsNotFound(err) {
 		// user := uuid.NewUUID()
 		secret = &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
@@ -72,7 +88,7 @@ func secretGet(ctx context.Context, r client.Reader, dbAccount *v1.DatabaseAccou
 			},
 			StringData: map[string]string{},
 			Data:       map[string][]byte{},
-			Type:       `kubeprj.github.io/database-account`,
+			Type:       secretType,
 		}
 		if dbAccount.Spec.OnDelete == v1.OnDeleteDelete {
 			secretAddOwnerRefs(secret, dbAccount)

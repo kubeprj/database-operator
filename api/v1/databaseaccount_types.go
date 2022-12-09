@@ -79,10 +79,6 @@ type DatabaseAccountStatus struct {
 	// +optional
 	Error bool `json:"error,omitempty"`
 
-	// // Error is the message if the Stage is Error.
-	// // +optional
-	// Error string `json:"error,omitempty"`
-
 	// ErrorMessage is the message if the Stage is Error.
 	// +optional
 	ErrorMessage string `json:"errorMsg,omitempty"`
@@ -122,7 +118,7 @@ const (
 )
 
 // DatabaseAccountCreateStage is the stage the account creation is up to.
-// +kubebuilder:validation:Enum=Init;UserCreate;DatabaseCreate;Error;Ready
+// +kubebuilder:validation:Enum=Init;UserCreate;DatabaseCreate;Error;Ready;Closed
 type DatabaseAccountCreateStage string
 
 func (d DatabaseAccountCreateStage) String() string {
@@ -147,6 +143,9 @@ const (
 
 	// ReadyStage is when the account is ready to be used.
 	ReadyStage DatabaseAccountCreateStage = "Ready"
+
+	// ClosedStage is when the account is finished.
+	ClosedStage DatabaseAccountCreateStage = "Closed"
 )
 
 //+kubebuilder:object:root=true

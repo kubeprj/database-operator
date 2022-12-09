@@ -119,6 +119,7 @@ spec:
                 - DatabaseCreate
                 - Error
                 - Ready
+                - Closed
                 type: string
             type: object
         type: object

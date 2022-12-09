@@ -161,3 +161,18 @@ envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	-@mkdir -p "$(@D)"
 	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
+GOLANGCILINT_VERSION ?= v1.50.1
+
+GOLANGCILINT := $(LOCALBIN)/$(GOLANGCILINT_VERSION)/golangci-lint
+$(GOLANGCILINT): $(LOCALBIN)
+	-@mkdir -p "$(@D)"
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(@D)" "$(*)"
+
+artifacts/lint/golangci-lint: SHELL=/bin/bash -o pipefail
+artifacts/lint/golangci-lint: $(GOLANGCILINT) $(GENERATED_FILES) $(GO_SOURCE_FILES)
+	-@mkdir -p "$(@D)"
+	$(eval GOLANGCILINT_ARGS += $(if $(GOLANGCILINT_CHECK_DISABLE),--disable '$(subst $(_golangcilint_space),$(_golangcilint_comma),$(GOLANGCILINT_CHECK_DISABLE))',))
+	$(GOLANGCILINT) run --sort-results --max-same-issues 0 --max-issues-per-linter 0 $(GOLANGCILINT_ARGS) ./... | tee "$(@)"
+
+lint:: artifacts/lint/golangci-lint
