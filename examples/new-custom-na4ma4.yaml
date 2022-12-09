@@ -1,10 +1,16 @@
 ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: na4ma4
+---
 apiVersion: kubeprj.github.io/v1
 kind: DatabaseAccount
 metadata:
   labels:
     app: secretapp
   name: secretaccount
+  namespace: na4ma4
 spec:
   onDelete: delete
   secretName: secretaccount-custom

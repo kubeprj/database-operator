@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"regexp"
 	"strings"
@@ -12,9 +11,22 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/sethvargo/go-password/password"
 	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var roleNameRegex = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
+var (
+	validNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]+$`)
+
+	nameRegex = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
+
+	ErrInvalidName = errors.New("invalid name")
+
+	ErrRoleExists = errors.New("role already exists")
+)
+
+const (
+	PostgreSQLNameDataLen = 64
+)
 
 type Server struct {
 	connString string
@@ -41,7 +53,28 @@ func NewServer(ctx context.Context, connString string) (*Server, error) {
 	// defer conn.Close(context.Background())
 }
 
+func (s *Server) CheckInvalidName(name string) (string, error) {
+	name = nameRegex.ReplaceAllString(name, "")
+
+	if !validNameRegex.MatchString(name) {
+		return name, fmt.Errorf("%w: invalid characters", ErrInvalidName)
+	}
+
+	switch strings.ToLower(name) {
+	case "postgres", "psql", "root":
+		return name, ErrInvalidName
+	}
+
+	if len(name) > PostgreSQLNameDataLen-1 {
+		return name, fmt.Errorf("%w: name too long", ErrInvalidName)
+	}
+
+	return name, nil
+}
+
 func (s *Server) Connect(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
 	if s.conn != nil {
 		if !s.conn.IsClosed() {
 			return nil
@@ -50,7 +83,8 @@ func (s *Server) Connect(ctx context.Context) error {
 
 	conn, err := pgx.Connect(ctx, s.connString)
 	if err != nil {
-		fmt.Printf("error: %s\n", err)
+		logger.Error(err, "unable to connect to the database")
+
 		return err
 	}
 
@@ -85,10 +119,13 @@ func (s *Server) ListUsers(ctx context.Context) []string {
 }
 
 // TODO actually generate password
-func (s *Server) generatePassword() string {
+func (s *Server) generatePassword(ctx context.Context) string {
+	logger := log.FromContext(ctx)
+
 	res, err := password.Generate(28, 10, 1, false, false)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error(err, "unable to generate password")
+		panic(err)
 	}
 	return res
 }
@@ -108,7 +145,11 @@ func (s *Server) IsRole(ctx context.Context, roleName string) (bool, error) {
 func (s *Server) IsDatabase(ctx context.Context, dbName string) (string, bool, error) {
 	_ = s.Connect(ctx)
 
-	dbName = roleNameRegex.ReplaceAllString(dbName, "")
+	dbName, err := s.CheckInvalidName(dbName)
+	if err != nil {
+		return dbName, false, err
+	}
+
 	rows, err := s.conn.Query(ctx, `SELECT FROM pg_database WHERE datname = $1`, dbName)
 	if err != nil {
 		return dbName, false, err
@@ -118,10 +159,9 @@ func (s *Server) IsDatabase(ctx context.Context, dbName string) (string, bool, e
 	return dbName, rows.Next(), nil
 }
 
-var ErrRoleExists = errors.New("role already exists")
-
 func (s *Server) CreateRole(ctx context.Context, roleName string) (string, string, error) {
 	_ = s.Connect(ctx)
+	logger := log.FromContext(ctx)
 
 	if v, err := s.IsRole(ctx, roleName); err != nil || v {
 		if v {
@@ -131,11 +171,15 @@ func (s *Server) CreateRole(ctx context.Context, roleName string) (string, strin
 		return "", "", err
 	}
 
-	password := s.generatePassword()
-	roleName = roleNameRegex.ReplaceAllString(roleName, "")
-	stmt := fmt.Sprintf(`CREATE ROLE %s LOGIN PASSWORD '%s'`, roleName, password)
-	_, err := s.conn.Exec(ctx, stmt)
+	roleName, err := s.CheckInvalidName(roleName)
 	if err != nil {
+		return "", "", fmt.Errorf("role name[%s]: %w", roleName, err)
+	}
+
+	password := s.generatePassword(ctx)
+	stmt := fmt.Sprintf(`CREATE ROLE %s LOGIN PASSWORD '%s'`, roleName, password)
+	logger.V(1).Info(fmt.Sprintf("SQL: %s", stmt))
+	if _, err := s.conn.Exec(ctx, stmt); err != nil {
 		return "", "", err
 	}
 
@@ -144,12 +188,17 @@ func (s *Server) CreateRole(ctx context.Context, roleName string) (string, strin
 
 func (s *Server) UpdateRolePassword(ctx context.Context, roleName string) (string, string, error) {
 	_ = s.Connect(ctx)
+	logger := log.FromContext(ctx)
 
-	password := s.generatePassword()
-	roleName = roleNameRegex.ReplaceAllString(roleName, "")
-	stmt := fmt.Sprintf(`ALTER ROLE %s LOGIN PASSWORD '%s'`, roleName, password)
-	_, err := s.conn.Exec(ctx, stmt)
+	roleName, err := s.CheckInvalidName(roleName)
 	if err != nil {
+		return "", "", fmt.Errorf("role name[%s]: %w", roleName, err)
+	}
+
+	password := s.generatePassword(ctx)
+	stmt := fmt.Sprintf(`ALTER ROLE %s LOGIN PASSWORD '%s'`, roleName, password)
+	logger.V(1).Info(fmt.Sprintf("SQL: %s", stmt))
+	if _, err := s.conn.Exec(ctx, stmt); err != nil {
 		return "", "", err
 	}
 
@@ -158,13 +207,22 @@ func (s *Server) UpdateRolePassword(ctx context.Context, roleName string) (strin
 
 func (s *Server) CreateDatabase(ctx context.Context, dbName, roleName string) (string, error) {
 	_ = s.Connect(ctx)
+	logger := log.FromContext(ctx)
+	var err error
 
-	dbName = roleNameRegex.ReplaceAllString(dbName, "")
-	roleName = roleNameRegex.ReplaceAllString(roleName, "")
-	stmt := fmt.Sprintf(`CREATE DATABASE %s OWNER %s`, dbName, roleName)
-
-	_, err := s.conn.Exec(ctx, stmt)
+	dbName, err = s.CheckInvalidName(dbName)
 	if err != nil {
+		return "", fmt.Errorf("database name[%s]: %w", dbName, err)
+	}
+
+	roleName, err = s.CheckInvalidName(roleName)
+	if err != nil {
+		return "", fmt.Errorf("role name[%s]: %w", roleName, err)
+	}
+
+	stmt := fmt.Sprintf(`CREATE DATABASE %s OWNER %s`, dbName, roleName)
+	logger.V(1).Info(fmt.Sprintf("SQL: %s", stmt))
+	if _, err := s.conn.Exec(ctx, stmt); err != nil {
 		return "", err
 	}
 
@@ -173,13 +231,22 @@ func (s *Server) CreateDatabase(ctx context.Context, dbName, roleName string) (s
 
 func (s *Server) CreateSchema(ctx context.Context, schemaName, roleName string) error {
 	_ = s.Connect(ctx)
+	logger := log.FromContext(ctx)
+	var err error
 
-	schemaName = roleNameRegex.ReplaceAllString(schemaName, "")
-	roleName = roleNameRegex.ReplaceAllString(roleName, "")
-	stmt := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s AUTHORIZATION %s`, schemaName, roleName)
-
-	_, err := s.conn.Exec(ctx, stmt)
+	schemaName, err = s.CheckInvalidName(schemaName)
 	if err != nil {
+		return fmt.Errorf("schema name[%s]: %w", schemaName, err)
+	}
+
+	roleName, err = s.CheckInvalidName(roleName)
+	if err != nil {
+		return fmt.Errorf("role name[%s]: %w", roleName, err)
+	}
+
+	stmt := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s AUTHORIZATION %s`, schemaName, roleName)
+	logger.V(1).Info(fmt.Sprintf("SQL: %s", stmt))
+	if _, err := s.conn.Exec(ctx, stmt); err != nil {
 		return err
 	}
 
@@ -237,18 +304,24 @@ func GenerateDSN(secret *corev1.Secret) string {
 
 func (s *Server) Delete(ctx context.Context, name string) error {
 	_ = s.Connect(ctx)
+	logger := log.FromContext(ctx)
 
-	name = roleNameRegex.ReplaceAllString(name, "")
-
-	_, err := s.conn.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, name))
+	name, err := s.CheckInvalidName(name)
 	if err != nil {
+		return fmt.Errorf("name[%s]: %w", name, err)
+	}
+
+	stmt := fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, name)
+	logger.V(1).Info(fmt.Sprintf("SQL: %s", stmt))
+	if _, err := s.conn.Exec(ctx, stmt); err != nil {
 		if !strings.Contains(err.Error(), " not found") {
 			return err
 		}
 	}
 
-	_, err = s.conn.Exec(ctx, fmt.Sprintf(`DROP ROLE IF EXISTS %s`, name))
-	if err != nil {
+	stmt = fmt.Sprintf(`DROP ROLE IF EXISTS %s`, name)
+	logger.V(1).Info(fmt.Sprintf("SQL: %s", stmt))
+	if _, err := s.conn.Exec(ctx, stmt); err != nil {
 		if !strings.Contains(err.Error(), " not found") {
 			return err
 		}

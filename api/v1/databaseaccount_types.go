@@ -17,16 +17,31 @@ limitations under the License.
 package v1
 
 import (
+	"context"
+	"errors"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+var (
+	ErrMissingDatabaseUsername = errors.New("missing database username")
 )
 
 // DatabaseAccountSpec defines the desired state of DatabaseAccount
 type DatabaseAccountSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
 	// Username is the username for the postgresql Database account.
 	Username string `json:"username,omitempty"`
+
+	// OnDelete specifies if the database should be removed when the user is removed.
+	// +optional
+	// +kubebuilder:default:=delete
+	OnDelete DatabaseAccountOnDelete `json:"onDelete,omitempty"`
+
+	// Name is the basename used for the resource, if not specified a UUID will be used.
+	// +optional
+	Name PostgreSQLResourceName `json:"name,omitempty"`
 
 	// SecretName is the optional name for the secret created with the DSN.
 	// +optional
@@ -60,14 +75,59 @@ type DatabaseAccountStatus struct {
 	// +kubebuilder:default:=Init
 	Stage DatabaseAccountCreateStage `json:"stage,omitempty"`
 
+	// Error is true if the DatabaseAccount is in error.
+	// +optional
+	Error bool `json:"error,omitempty"`
+
+	// // Error is the message if the Stage is Error.
+	// // +optional
+	// Error string `json:"error,omitempty"`
+
+	// ErrorMessage is the message if the Stage is Error.
+	// +optional
+	ErrorMessage string `json:"errorMsg,omitempty"`
+
+	// Name is the basename used for the resource.
+	Name PostgreSQLResourceName `json:"name,omitempty"`
+
 	// Ready is the boolean for when a resource is ready to use.
 	// +kubebuilder:default:=false
 	Ready bool `json:"ready,omitempty"`
 }
 
+// PostgreSQLResourceName is a kubernetes validation for a PostgreSQL resource name.
+// +optional
+// +kubebuilder:validation:Pattern:="^[a-zA-Z_][a-zA-Z0-9_]+$"
+// +kubebuilder:validation:MaxLength:=61
+type PostgreSQLResourceName string
+
+func (d PostgreSQLResourceName) String() string {
+	return string(d)
+}
+
+// DatabaseAccountOnDelete is the options that can be set for onDelete.
+// +kubebuilder:validation:Enum=retain;delete
+type DatabaseAccountOnDelete string
+
+func (d DatabaseAccountOnDelete) String() string {
+	return string(d)
+}
+
+const (
+	// OnDeleteRetain retain the database and user.
+	OnDeleteRetain DatabaseAccountOnDelete = "retain"
+
+	// OnDeleteDelete delete the created database and user.
+	OnDeleteDelete DatabaseAccountOnDelete = "delete"
+)
+
 // DatabaseAccountCreateStage is the stage the account creation is up to.
-// +kubebuilder:validation:Enum=Init;UserCreate;DatabaseCreate;Ready
+// +kubebuilder:validation:Enum=Init;UserCreate;DatabaseCreate;Error;Ready
 type DatabaseAccountCreateStage string
+
+func (d DatabaseAccountCreateStage) String() string {
+	return string(d)
+}
 
 const (
 	// UnknownStage is the first stage of creating the account.
@@ -81,6 +141,9 @@ const (
 
 	// DatabaseCreateStage is the step where the account creation has been started.
 	DatabaseCreateStage DatabaseAccountCreateStage = "DatabaseCreate"
+
+	// ErrorStage is when the account has failed and won't be completed without changes.
+	ErrorStage DatabaseAccountCreateStage = "Error"
 
 	// ReadyStage is when the account is ready to be used.
 	ReadyStage DatabaseAccountCreateStage = "Ready"
@@ -99,6 +162,45 @@ type DatabaseAccount struct {
 
 	Spec   DatabaseAccountSpec   `json:"spec,omitempty"`
 	Status DatabaseAccountStatus `json:"status,omitempty"`
+}
+
+func (d *DatabaseAccount) GetReference() *metav1.OwnerReference {
+	return &metav1.OwnerReference{
+		APIVersion: d.APIVersion,
+		Kind:       d.Kind,
+		Name:       d.GetName(),
+		UID:        d.GetUID(),
+	}
+}
+
+func (d *DatabaseAccount) GetSecretName() types.NamespacedName {
+	if d.Spec.SecretName != "" {
+		return types.NamespacedName{
+			Namespace: d.GetNamespace(),
+			Name:      d.Spec.SecretName,
+		}
+	}
+
+	return types.NamespacedName{
+		Namespace: d.GetNamespace(),
+		Name:      d.GetName(),
+	}
+}
+
+func (d *DatabaseAccount) GetDatabaseName() (string, error) {
+	if len(d.Status.Name) == 0 {
+		return "", ErrMissingDatabaseUsername
+	}
+
+	return d.Status.Name.String(), nil
+}
+
+func (d *DatabaseAccount) UpdateStatus(r client.StatusClient, ctx context.Context) error {
+	return r.Status().Update(ctx, d)
+}
+
+func (d *DatabaseAccount) Update(r client.Client, ctx context.Context) error {
+	return r.Update(ctx, d)
 }
 
 //+kubebuilder:object:root=true

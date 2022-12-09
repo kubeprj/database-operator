@@ -32,7 +32,14 @@ type DatabaseAccountControllerConfig struct {
 	// ControllerManagerConfigurationSpec returns the contfigurations for controllers
 	cfg.ControllerManagerConfigurationSpec `json:",inline"`
 
+	Debug DatabaseAccountControllerConfigDebug `json:"debug,omitempty"`
+
+	// DatabaseDSN is the DSN for the database that will be used for creating accounts and databases on.
 	DatabaseDSN string `json:"dsn,omitempty"`
+}
+
+type DatabaseAccountControllerConfigDebug struct {
+	ReconcileSleep int `json:"reconcileSleep,omitempty"`
 }
 
 func init() {

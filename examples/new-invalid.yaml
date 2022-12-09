@@ -1,0 +1,13 @@
+---
+apiVersion: kubeprj.github.io/v1
+kind: DatabaseAccount
+metadata:
+  labels:
+    app: invalidapp
+  name: invalidaccount
+spec:
+  name: "0invalidname012345678901234567890123456789012345678901234567890123456789"
+  onDelete: delete
+  secretTemplate:
+    labels:
+      app: invalidapp

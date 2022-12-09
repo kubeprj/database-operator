@@ -56,7 +56,14 @@ spec:
                   of version) would be `ReplicaSet.apps`."
                 type: object
             type: object
+          debug:
+            properties:
+              reconcileSleep:
+                type: integer
+            type: object
           dsn:
+            description: DatabaseDSN is the DSN for the database that will be used
+              for creating accounts and databases on.
             type: string
           gracefulShutDown:
             description: GracefulShutdownTimeout is the duration given to runnable

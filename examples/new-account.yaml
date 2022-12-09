@@ -1,5 +1,5 @@
 ---
-apiVersion: psqladmin.cwx.io/v1
+apiVersion: kubeprj.github.io/v1
 kind: DatabaseAccount
 metadata:
   labels:

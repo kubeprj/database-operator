@@ -2,7 +2,7 @@
 apiVersion: v1
 data:
   controller_manager_config.yaml: |
-    apiVersion: psqladmin.cwx.io/v1
+    apiVersion: kubeprj.github.io/v1
     kind: DatabaseAccountControllerConfig
     metadata:
       name: "controller-config"

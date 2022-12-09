@@ -14,6 +14,7 @@ RUN go mod download
 # Copy the go source
 COPY main.go main.go
 COPY api/ api/
+COPY accountsvr/ accountsvr/
 COPY controllers/ controllers/
 
 # Build
@@ -26,6 +27,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
+
+LABEL name="kubeprj-database-operator" \
+      vendor="kubeprj" \
+      version="0.9.0" \
+      summary="Database account operator for Kubernetes" \
+      description="The Database operator runs on a kubernetes cluster and maintains accounts on an external database cluster."
+
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532

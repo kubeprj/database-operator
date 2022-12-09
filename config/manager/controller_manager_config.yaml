@@ -1,0 +1,10 @@
+apiVersion: kubeprj.github.io/v1
+kind: DatabaseAccountControllerConfig
+dsn: "postgres://postgres:mysecretpassword@localhost:5432/"
+metrics:
+  bindAddress: 0.0.0.0:8080
+webhook:
+  port: 9443
+leaderElection:
+  leaderElect: true
+  resourceName: 16a815a2.kubeprj.github.io

@@ -47,6 +47,20 @@ spec:
           spec:
             description: DatabaseAccountSpec defines the desired state of DatabaseAccount
             properties:
+              name:
+                description: Name is the basename used for the resource, if not specified
+                  a UUID will be used.
+                maxLength: 61
+                pattern: ^[a-zA-Z_][a-zA-Z0-9_]+$
+                type: string
+              onDelete:
+                default: delete
+                description: OnDelete specifies if the database should be removed
+                  when the user is removed.
+                enum:
+                - retain
+                - delete
+                type: string
               secretName:
                 description: SecretName is the optional name for the secret created
                   with the DSN.
@@ -80,6 +94,17 @@ spec:
           status:
             description: DatabaseAccountStatus defines the observed state of DatabaseAccount
             properties:
+              error:
+                description: Error is true if the DatabaseAccount is in error.
+                type: boolean
+              errorMsg:
+                description: ErrorMessage is the message if the Stage is Error.
+                type: string
+              name:
+                description: Name is the basename used for the resource.
+                maxLength: 61
+                pattern: ^[a-zA-Z_][a-zA-Z0-9_]+$
+                type: string
               ready:
                 default: false
                 description: Ready is the boolean for when a resource is ready to
@@ -92,6 +117,7 @@ spec:
                 - Init
                 - UserCreate
                 - DatabaseCreate
+                - Error
                 - Ready
                 type: string
             type: object
