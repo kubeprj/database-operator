@@ -18,6 +18,9 @@ import (
 )
 
 const (
+	// secretType is the type used to indicate a secret has been created by this operator.
+	//
+	//nolint:gosec // not credentials.
 	secretType = `kubeprj.github.io/database-account`
 )
 
@@ -28,7 +31,16 @@ func newDatabaseAccountName(ctx context.Context) v1.PostgreSQLResourceName {
 	return v1.PostgreSQLResourceName(strings.ToLower("k8s_" + ulid.Make().String()))
 }
 
-func secretRun(ctx context.Context, r client.Reader, w client.Writer, accountSvr *accountsvr.Server, dbAccount *v1.DatabaseAccount, f func(secret *corev1.Secret) error) error {
+type secretFunc func(secret *corev1.Secret) error
+
+func secretRun(
+	ctx context.Context,
+	r client.Reader,
+	w client.Writer,
+	accountSvr *accountsvr.Server,
+	dbAccount *v1.DatabaseAccount,
+	f secretFunc,
+) error {
 	logger := log.FromContext(ctx)
 
 	secret, err := secretGet(ctx, r, dbAccount)

@@ -170,7 +170,7 @@ $(GOLANGCILINT): $(LOCALBIN)
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(@D)" "$(*)"
 
 artifacts/lint/golangci-lint: SHELL=/bin/bash -o pipefail
-artifacts/lint/golangci-lint: $(GOLANGCILINT) $(GENERATED_FILES) $(GO_SOURCE_FILES)
+artifacts/lint/golangci-lint: $(GOLANGCILINT) $(shell find . -name '*.go')
 	-@mkdir -p "$(@D)"
 	$(eval GOLANGCILINT_ARGS += $(if $(GOLANGCILINT_CHECK_DISABLE),--disable '$(subst $(_golangcilint_space),$(_golangcilint_comma),$(GOLANGCILINT_CHECK_DISABLE))',))
 	$(GOLANGCILINT) run --sort-results --max-same-issues 0 --max-issues-per-linter 0 $(GOLANGCILINT_ARGS) ./... | tee "$(@)"

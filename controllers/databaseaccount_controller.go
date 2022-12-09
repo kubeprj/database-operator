@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/kubeprj/database-operator/accountsvr"
-	kubeprjgithubiov1 "github.com/kubeprj/database-operator/api/v1"
 	v1 "github.com/kubeprj/database-operator/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,10 +42,11 @@ import (
 )
 
 const (
-	finalizerName = "kubeprj.github.io/database-account-finalizer"
+	finalizerName      = "kubeprj.github.io/database-account-finalizer"
+	defaultRequeueTime = 5 * time.Second
 )
 
-// DatabaseAccountReconciler reconciles a DatabaseAccount object
+// DatabaseAccountReconciler reconciles a DatabaseAccount object.
 type DatabaseAccountReconciler struct {
 	client.Client
 	Scheme        *runtime.Scheme
@@ -57,7 +57,6 @@ type DatabaseAccountReconciler struct {
 
 var ErrNewSecret = errors.New("creating new secret")
 var ErrSecretImmutable = errors.New("secret is immutable")
-var requeueResult = ctrl.Result{RequeueAfter: 5 * time.Second}
 
 //+kubebuilder:rbac:groups=kubeprj.github.io,resources=databaseaccounts,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=kubeprj.github.io,resources=databaseaccounts/status,verbs=get;update;patch
@@ -86,7 +85,7 @@ func (r *DatabaseAccountReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.Get(ctx, req.NamespacedName, &dbAccount); err != nil && !apierrors.IsNotFound(err) {
 		logger.Error(err, "unable to retrieve database account")
 
-		return requeueResult, err
+		return ctrl.Result{}, err
 	} else if apierrors.IsNotFound(err) {
 		// record is deleted
 		logger.V(1).Info("record is deleted")
@@ -101,6 +100,7 @@ func (r *DatabaseAccountReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// logger.V(1).Info("entering switch", "stage", dbAccount.Status.Stage)
 
 	if r.Config.Debug.ReconcileSleep > 0 {
+		//nolint:gosec,gomnd // simple random for use when debugging.
 		n := rand.Intn(r.Config.Debug.ReconcileSleep/2) + r.Config.Debug.ReconcileSleep/2
 		logger.V(1).Info(fmt.Sprintf("sleeping %d seconds", n))
 		time.Sleep(time.Duration(n) * time.Second)
@@ -127,7 +127,10 @@ func (r *DatabaseAccountReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, nil
 }
 
-func (r *DatabaseAccountReconciler) handleFinalizers(ctx context.Context, dbAccount *v1.DatabaseAccount) (bool, ctrl.Result, error) {
+func (r *DatabaseAccountReconciler) handleFinalizers(
+	ctx context.Context,
+	dbAccount *v1.DatabaseAccount,
+) (bool, ctrl.Result, error) {
 	if dbAccount.ObjectMeta.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(dbAccount, finalizerName) {
 			// logger.V(1).Info("adding finalizer to DatabaseAccount")
@@ -143,7 +146,7 @@ func (r *DatabaseAccountReconciler) handleFinalizers(ctx context.Context, dbAcco
 			if err := r.deleteExternalResources(ctx, dbAccount); err != nil {
 				// if fail to delete the external dependency here, return with error
 				// so that it can be retried
-				return true, requeueResult, err
+				return true, ctrl.Result{}, err
 			}
 
 			// remove our finalizer from the list and update it.
@@ -184,28 +187,33 @@ func (r *DatabaseAccountReconciler) deleteDatabase(ctx context.Context, name str
 
 	logger.Info("Database record marked for delete, deleting", "databaseName", name)
 
-	if dbName, ok, err := r.AccountServer.IsDatabase(ctx, name); err == nil && ok {
+	dbName, ok, err := r.AccountServer.IsDatabase(ctx, name)
+	switch {
+	case err == nil && ok:
 		logger.V(1).Info("Database exists, deleting")
 
-		if err := r.AccountServer.Delete(ctx, name); err != nil {
+		if err = r.AccountServer.Delete(ctx, name); err != nil {
 			logger.Error(err, "Unable to delete database and/or user")
 
 			return err
 		}
 
 		logger.Info("Database account deleted", "databaseName", name)
-	} else if err != nil {
+	case err != nil:
 		logger.V(1).Error(err, "Unable to check if database exists")
 
 		return err
-	} else {
+	default:
 		logger.V(1).Info("IsDatabase returned", "isDB[dbName]", dbName, "isDB[ok]", ok, "isDB[err]", err)
 	}
 
 	return nil
 }
 
-func (r *DatabaseAccountReconciler) stageZero(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
+func (r *DatabaseAccountReconciler) stageZero(
+	ctx context.Context,
+	dbAccount *v1.DatabaseAccount,
+) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	dbAccount.Status.Stage = v1.InitStage
@@ -213,26 +221,23 @@ func (r *DatabaseAccountReconciler) stageZero(ctx context.Context, dbAccount *v1
 		dbAccount.Status.Name = newDatabaseAccountName(ctx)
 	}
 
-	if err := dbAccount.UpdateStatus(r, ctx); err != nil {
+	if err := dbAccount.UpdateStatus(ctx, r); err != nil {
 		logger.V(1).Error(err, "unable to update DatabaseAccount")
 
-		return requeueResult, err
+		return ctrl.Result{}, err
 	}
 
 	// logger.V(1).Info("return result[ok]")
 	return ctrl.Result{}, nil
 }
 
-func (r *DatabaseAccountReconciler) stageInit(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
+func (r *DatabaseAccountReconciler) stageInit(
+	ctx context.Context,
+	dbAccount *v1.DatabaseAccount,
+) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	if err := secretRun(ctx, r, r, r.AccountServer, dbAccount, func(secret *corev1.Secret) error {
-		return nil
-	}); err != nil && errors.Is(err, ErrSecretImmutable) {
-
-	}
-
-	if err := secretRun(ctx, r, r, r.AccountServer, dbAccount, func(secret *corev1.Secret) error {
+	err := secretRun(ctx, r, r, r.AccountServer, dbAccount, func(secret *corev1.Secret) error {
 		if secret.Immutable != nil && *secret.Immutable {
 			return ErrSecretImmutable
 		}
@@ -246,24 +251,27 @@ func (r *DatabaseAccountReconciler) stageInit(ctx context.Context, dbAccount *v1
 		r.setSecretKV(secret, accountsvr.DatabaseKeyUsername, name)
 
 		return nil
-	}); err != nil && errors.Is(err, ErrSecretImmutable) {
+	})
+
+	switch {
+	case err != nil && errors.Is(err, ErrSecretImmutable):
 		r.Recorder.WarningEvent(dbAccount, ReasonQueued, "Secret already exists and is immutable")
 		dbAccount.Status.Error = true
 		dbAccount.Status.ErrorMessage = "Secret already exists and is immutable"
 		dbAccount.Status.Stage = v1.ErrorStage
 
-		if err := dbAccount.UpdateStatus(r, ctx); err != nil {
+		if err = dbAccount.UpdateStatus(ctx, r); err != nil {
 			logger.V(1).Error(err, "Unable to update DatabaseAccount status")
 
-			return requeueResult, err
+			return ctrl.Result{}, err
 		}
 
 		return ctrl.Result{}, nil
-	} else if err != nil {
+	case err != nil:
 		logger.V(1).Error(err, "Unable to create/retrieve secret")
 
-		return requeueResult, err
-	} else {
+		return ctrl.Result{}, err
+	default:
 		r.Recorder.NormalEvent(dbAccount, ReasonQueued, "Queued for creation")
 	}
 
@@ -272,14 +280,17 @@ func (r *DatabaseAccountReconciler) stageInit(ctx context.Context, dbAccount *v1
 	if err := r.Status().Update(ctx, dbAccount); err != nil {
 		logger.V(1).Error(err, "Unable to update DatabaseAccount status")
 
-		return requeueResult, err
+		return ctrl.Result{}, err
 	}
 
 	// logger.V(1).Info("return result[ok]")
 	return ctrl.Result{}, nil
 }
 
-func (r *DatabaseAccountReconciler) stageUserCreate(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
+func (r *DatabaseAccountReconciler) stageUserCreate(
+	ctx context.Context,
+	dbAccount *v1.DatabaseAccount,
+) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	r.Recorder.NormalEvent(dbAccount, ReasonUserCreate, "Creating database user")
@@ -310,7 +321,7 @@ func (r *DatabaseAccountReconciler) stageUserCreate(ctx context.Context, dbAccou
 	}); err != nil {
 		logger.V(1).Error(err, "Unable to create/retrieve secret")
 
-		return requeueResult, err
+		return ctrl.Result{}, err
 	}
 
 	dbAccount.Status.Stage = v1.DatabaseCreateStage
@@ -318,7 +329,7 @@ func (r *DatabaseAccountReconciler) stageUserCreate(ctx context.Context, dbAccou
 	if err := r.Status().Update(ctx, dbAccount); err != nil {
 		logger.V(1).Error(err, "Unable to update DatabaseAccount")
 
-		return requeueResult, err
+		return ctrl.Result{}, err
 	}
 	r.Recorder.NormalEvent(dbAccount, ReasonDatabaseCreate, "Creating database")
 
@@ -326,7 +337,10 @@ func (r *DatabaseAccountReconciler) stageUserCreate(ctx context.Context, dbAccou
 	return ctrl.Result{}, nil
 }
 
-func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
+func (r *DatabaseAccountReconciler) stageDatabaseCreate(
+	ctx context.Context,
+	dbAccount *v1.DatabaseAccount,
+) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	name, err := dbAccount.GetDatabaseName()
@@ -334,11 +348,17 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 		return ctrl.Result{}, err
 	}
 
-	if dbName, ok, err := r.AccountServer.IsDatabase(ctx, name); err != nil {
-		r.Recorder.WarningEvent(dbAccount, ReasonDatabaseCreate, fmt.Sprintf("Failed to init check for create database: %s", err))
+	dbName, ok, err := r.AccountServer.IsDatabase(ctx, name)
+	switch {
+	case err != nil:
+		r.Recorder.WarningEvent(
+			dbAccount,
+			ReasonDatabaseCreate,
+			fmt.Sprintf("Failed to init check for create database: %s", err),
+		)
 
 		return ctrl.Result{}, err
-	} else if ok {
+	case ok:
 		r.Recorder.WarningEvent(dbAccount, ReasonDatabaseCreate, "Database already exists")
 		if err := secretRun(ctx, r, r, r.AccountServer, dbAccount, func(secret *corev1.Secret) error {
 			r.setSecretKV(secret, accountsvr.DatabaseKeyDatabase, dbName)
@@ -350,10 +370,14 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 		}); err != nil {
 			logger.V(1).Error(err, "Unable to update secret")
 
-			return requeueResult, err
+			return ctrl.Result{}, err
 		}
-	} else {
+	default:
 		dbName, err := r.AccountServer.CreateDatabase(ctx, name, name)
+		if err != nil {
+			r.Recorder.WarningEvent(dbAccount, ReasonDatabaseCreate, fmt.Sprintf("Failed to create database: %s", err))
+			return ctrl.Result{}, err
+		}
 
 		if err := secretRun(ctx, r, r, r.AccountServer, dbAccount, func(secret *corev1.Secret) error {
 			r.setSecretKV(secret, accountsvr.DatabaseKeyDatabase, dbName)
@@ -365,11 +389,6 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 		}); err != nil {
 			logger.V(1).Error(err, "Unable to update secret")
 
-			return requeueResult, err
-		}
-
-		if err != nil {
-			r.Recorder.WarningEvent(dbAccount, ReasonDatabaseCreate, fmt.Sprintf("Failed to create database: %s", err))
 			return ctrl.Result{}, err
 		}
 
@@ -381,7 +400,7 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 	if err := r.Status().Update(ctx, dbAccount); err != nil {
 		logger.V(1).Error(err, "Unable to update DatabaseAccount")
 
-		return requeueResult, err
+		return ctrl.Result{}, err
 	}
 
 	r.Recorder.NormalEvent(dbAccount, ReasonReady, "Ready to use")
@@ -394,7 +413,10 @@ func (r *DatabaseAccountReconciler) stageDatabaseCreate(ctx context.Context, dbA
 	return ctrl.Result{}, nil
 }
 
-func (r *DatabaseAccountReconciler) stageReady(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
+func (r *DatabaseAccountReconciler) stageReady(
+	ctx context.Context,
+	dbAccount *v1.DatabaseAccount,
+) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	logger.V(1).Info("Record is marked as ready, nothing to do")
@@ -406,7 +428,7 @@ func (r *DatabaseAccountReconciler) stageReady(ctx context.Context, dbAccount *v
 		if err := r.Delete(ctx, dbAccount); err != nil {
 			logger.Error(err, "Unable to delete DatabaseAccount in reaction to secret deletion")
 
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: defaultRequeueTime}, nil
 		}
 
 		return ctrl.Result{}, nil
@@ -435,7 +457,7 @@ func (r *DatabaseAccountReconciler) stageReady(ctx context.Context, dbAccount *v
 	}); err != nil {
 		logger.V(1).Error(err, "Unable to update secret")
 
-		return requeueResult, err
+		return ctrl.Result{}, err
 	}
 
 	if onDeleteUpdate {
@@ -446,7 +468,10 @@ func (r *DatabaseAccountReconciler) stageReady(ctx context.Context, dbAccount *v
 	return ctrl.Result{}, nil
 }
 
-func (r *DatabaseAccountReconciler) stageError(ctx context.Context, dbAccount *v1.DatabaseAccount) (ctrl.Result, error) {
+func (r *DatabaseAccountReconciler) stageError(
+	ctx context.Context,
+	dbAccount *v1.DatabaseAccount,
+) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	logger.Info("Record is marked as error, nothing to do")
@@ -535,7 +560,7 @@ func (r *DatabaseAccountReconciler) reconcileSecret(secretObj client.Object) []r
 // SetupWithManager sets up the controller with the Manager.
 func (r *DatabaseAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&kubeprjgithubiov1.DatabaseAccount{}).
+		For(&v1.DatabaseAccount{}).
 		Owns(&corev1.Secret{}).
 		Watches(
 			&source.Kind{Type: &corev1.Secret{}},

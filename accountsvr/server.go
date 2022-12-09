@@ -278,7 +278,7 @@ func getSecretKV(secret *corev1.Secret, key string) string {
 	}
 
 	if v, ok := secret.Data[key]; ok {
-		return fmt.Sprintf("%s", v)
+		return string(v)
 	}
 
 	return ""

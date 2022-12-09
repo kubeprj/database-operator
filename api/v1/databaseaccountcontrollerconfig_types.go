@@ -24,7 +24,7 @@ import (
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 
-// DatabaseAccountControllerConfig is the Schema for the databaseaccountcontrollerconfigs API
+// DatabaseAccountControllerConfig is the Schema for the databaseaccountcontrollerconfigs API.
 type DatabaseAccountControllerConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -42,6 +42,7 @@ type DatabaseAccountControllerConfigDebug struct {
 	ReconcileSleep int `json:"reconcileSleep,omitempty"`
 }
 
+//nolint:gochecknoinits // kubebuilder
 func init() {
 	SchemeBuilder.Register(&DatabaseAccountControllerConfig{})
 }

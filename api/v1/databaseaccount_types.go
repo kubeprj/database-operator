@@ -29,7 +29,7 @@ var (
 	ErrMissingDatabaseUsername = errors.New("missing database username")
 )
 
-// DatabaseAccountSpec defines the desired state of DatabaseAccount
+// DatabaseAccountSpec defines the desired state of DatabaseAccount.
 type DatabaseAccountSpec struct {
 	// Username is the username for the postgresql Database account.
 	Username string `json:"username,omitempty"`
@@ -51,7 +51,7 @@ type DatabaseAccountSpec struct {
 	SecretTemplate DatabaseAccountSpecSecretTemplate `json:"secretTemplate,omitempty"`
 }
 
-// DatabaseAccountSpecSecretTemplate defines the desired state of DatabaseAccount
+// DatabaseAccountSpecSecretTemplate defines the desired state of DatabaseAccount.
 type DatabaseAccountSpecSecretTemplate struct {
 	// Map of string keys and values that can be used to organize and categorize
 	// (scope and select) objects. May match selectors of replication controllers
@@ -68,7 +68,7 @@ type DatabaseAccountSpecSecretTemplate struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
-// DatabaseAccountStatus defines the observed state of DatabaseAccount
+// DatabaseAccountStatus defines the observed state of DatabaseAccount.
 type DatabaseAccountStatus struct {
 	// State is the progress of creating the account.
 	// +optional
@@ -118,7 +118,7 @@ const (
 )
 
 // DatabaseAccountCreateStage is the stage the account creation is up to.
-// +kubebuilder:validation:Enum=Init;UserCreate;DatabaseCreate;Error;Ready;Closed
+// +kubebuilder:validation:Enum=Init;UserCreate;DatabaseCreate;Error;Ready
 type DatabaseAccountCreateStage string
 
 func (d DatabaseAccountCreateStage) String() string {
@@ -143,18 +143,16 @@ const (
 
 	// ReadyStage is when the account is ready to be used.
 	ReadyStage DatabaseAccountCreateStage = "Ready"
-
-	// ClosedStage is when the account is finished.
-	ClosedStage DatabaseAccountCreateStage = "Closed"
 )
 
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
-//+kubebuilder:printcolumn:name="Stage",type=string,JSONPath=`.status.stage`,description="deployment stage for database account"
-//+kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.ready`,description="ready status of database account"
-//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
-
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Stage",type=string,JSONPath=`.status.stage`,description="deployment stage for database account"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.ready`,description="ready status of database account"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // DatabaseAccount is the Schema for the databaseaccounts API
+//
+//nolint:lll // kubebuilder comments.
 type DatabaseAccount struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -194,23 +192,24 @@ func (d *DatabaseAccount) GetDatabaseName() (string, error) {
 	return d.Status.Name.String(), nil
 }
 
-func (d *DatabaseAccount) UpdateStatus(r client.StatusClient, ctx context.Context) error {
+func (d *DatabaseAccount) UpdateStatus(ctx context.Context, r client.StatusClient) error {
 	return r.Status().Update(ctx, d)
 }
 
-func (d *DatabaseAccount) Update(r client.Client, ctx context.Context) error {
+func (d *DatabaseAccount) Update(ctx context.Context, r client.Client) error {
 	return r.Update(ctx, d)
 }
 
 //+kubebuilder:object:root=true
 
-// DatabaseAccountList contains a list of DatabaseAccount
+// DatabaseAccountList contains a list of DatabaseAccount.
 type DatabaseAccountList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []DatabaseAccount `json:"items"`
 }
 
+//nolint:gochecknoinits // kubebuilder
 func init() {
 	SchemeBuilder.Register(&DatabaseAccount{}, &DatabaseAccountList{})
 }
