@@ -5,8 +5,8 @@ go 1.19
 require (
 	github.com/jackc/pgx/v5 v5.3.1
 	github.com/oklog/ulid/v2 v2.1.0
-	github.com/onsi/ginkgo/v2 v2.9.5
-	github.com/onsi/gomega v1.27.7
+	github.com/onsi/ginkgo/v2 v2.9.7
+	github.com/onsi/gomega v1.27.8
 	github.com/sethvargo/go-password v0.2.0
 	k8s.io/api v0.27.2
 	k8s.io/apimachinery v0.27.2
